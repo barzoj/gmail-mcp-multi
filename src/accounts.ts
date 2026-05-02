@@ -20,6 +20,9 @@ interface Config {
 const CONFIG_DIR = path.join(os.homedir(), ".gmail-mcp");
 const CONFIG_FILE = path.join(CONFIG_DIR, "config.json");
 const ACCOUNTS_DIR = path.join(CONFIG_DIR, "accounts");
+const PRIVATE_DIR_MODE = 0o700;
+const PRIVATE_FILE_MODE = 0o600;
+const ALIAS_PATTERN = /^[a-zA-Z0-9_-]{1,64}$/;
 
 export class AccountManager {
   private config: Config = { accounts: [] };
@@ -31,11 +34,14 @@ export class AccountManager {
 
   private ensureDirectories(): void {
     if (!fs.existsSync(CONFIG_DIR)) {
-      fs.mkdirSync(CONFIG_DIR, { recursive: true });
+      fs.mkdirSync(CONFIG_DIR, { recursive: true, mode: PRIVATE_DIR_MODE });
     }
+    fs.chmodSync(CONFIG_DIR, PRIVATE_DIR_MODE);
+
     if (!fs.existsSync(ACCOUNTS_DIR)) {
-      fs.mkdirSync(ACCOUNTS_DIR, { recursive: true });
+      fs.mkdirSync(ACCOUNTS_DIR, { recursive: true, mode: PRIVATE_DIR_MODE });
     }
+    fs.chmodSync(ACCOUNTS_DIR, PRIVATE_DIR_MODE);
   }
 
   private loadConfig(): void {
@@ -46,10 +52,14 @@ export class AccountManager {
   }
 
   private saveConfig(): void {
-    fs.writeFileSync(CONFIG_FILE, JSON.stringify(this.config, null, 2));
+    fs.writeFileSync(CONFIG_FILE, JSON.stringify(this.config, null, 2), {
+      mode: PRIVATE_FILE_MODE,
+    });
+    fs.chmodSync(CONFIG_FILE, PRIVATE_FILE_MODE);
   }
 
   getAccountDir(alias: string): string {
+    this.validateAlias(alias);
     return path.join(ACCOUNTS_DIR, alias);
   }
 
@@ -75,6 +85,11 @@ export class AccountManager {
   }
 
   addAccount(alias: string, email: string): void {
+    this.validateAlias(alias);
+    if (!email || !email.includes("@")) {
+      throw new Error("A valid email address is required");
+    }
+
     const existing = this.config.accounts.findIndex(
       (acc) => acc.alias === alias
     );
@@ -87,8 +102,9 @@ export class AccountManager {
     // Create account directory
     const accountDir = this.getAccountDir(alias);
     if (!fs.existsSync(accountDir)) {
-      fs.mkdirSync(accountDir, { recursive: true });
+      fs.mkdirSync(accountDir, { recursive: true, mode: PRIVATE_DIR_MODE });
     }
+    fs.chmodSync(accountDir, PRIVATE_DIR_MODE);
 
     this.saveConfig();
   }
@@ -111,5 +127,27 @@ export class AccountManager {
 
   getOAuthKeysPath(): string {
     return path.join(CONFIG_DIR, "oauth-keys.json");
+  }
+
+  saveCredentials(alias: string, credentials: unknown): void {
+    const accountDir = this.getAccountDir(alias);
+    if (!fs.existsSync(accountDir)) {
+      fs.mkdirSync(accountDir, { recursive: true, mode: PRIVATE_DIR_MODE });
+    }
+    fs.chmodSync(accountDir, PRIVATE_DIR_MODE);
+
+    const credentialsPath = this.getCredentialsPath(alias);
+    fs.writeFileSync(credentialsPath, JSON.stringify(credentials, null, 2), {
+      mode: PRIVATE_FILE_MODE,
+    });
+    fs.chmodSync(credentialsPath, PRIVATE_FILE_MODE);
+  }
+
+  validateAlias(alias: string): void {
+    if (!ALIAS_PATTERN.test(alias)) {
+      throw new Error(
+        "Account alias must be 1-64 characters using only letters, numbers, underscores, or hyphens"
+      );
+    }
   }
 }

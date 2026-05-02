@@ -1,6 +1,7 @@
 import { Tool, CallToolRequest } from "@modelcontextprotocol/sdk/types.js";
 import { AccountManager } from "../accounts.js";
 import { GmailClient } from "../gmail.js";
+import { authenticateAccount } from "../oauth.js";
 
 export const tools: Tool[] = [
   {
@@ -25,6 +26,11 @@ export const tools: Tool[] = [
         email: {
           type: "string",
           description: "Email address for this account (used as login hint)",
+        },
+        access: {
+          type: "string",
+          enum: ["readonly", "modify", "full"],
+          description: "Gmail access level to request (default: readonly)",
         },
       },
       required: ["alias"],
@@ -173,12 +179,22 @@ export async function handleToolCall(
       }
 
       case "authenticate": {
-        // TODO: Implement OAuth flow
+        const { alias, email, access } = args as {
+          alias: string;
+          email?: string;
+          access?: "readonly" | "modify" | "full";
+        };
+        const account = await authenticateAccount(accountManager, {
+          alias,
+          email,
+          access,
+        });
+
         return {
           content: [
             {
               type: "text",
-              text: "Authentication flow not yet implemented. See issue #3.",
+              text: JSON.stringify(account, null, 2),
             },
           ],
         };

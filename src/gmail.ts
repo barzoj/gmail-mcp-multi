@@ -50,7 +50,10 @@ export class GmailClient {
       }
       credentials.access_token = tokens.access_token;
       credentials.expiry_date = tokens.expiry_date;
-      fs.writeFileSync(credentialsPath, JSON.stringify(credentials, null, 2));
+      fs.writeFileSync(credentialsPath, JSON.stringify(credentials, null, 2), {
+        mode: 0o600,
+      });
+      fs.chmodSync(credentialsPath, 0o600);
     });
 
     const client = google.gmail({ version: "v1", auth: oauth2Client });

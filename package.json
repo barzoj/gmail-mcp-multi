@@ -4,7 +4,8 @@
   "description": "A Gmail MCP server with native multi-account support",
   "main": "dist/index.js",
   "bin": {
-    "gmail-mcp-multi": "dist/index.js"
+    "gmail-mcp-multi": "dist/index.js",
+    "gmail-mcp-multi-auth": "dist/auth.js"
   },
   "scripts": {
     "build": "tsc",
