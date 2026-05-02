@@ -8,7 +8,7 @@ Unlike other Gmail MCPs that require running separate server instances per accou
 
 - **Multi-account support** - Single server instance, unlimited Gmail accounts
 - **Account aliases** - Use friendly names like "work" or "personal" instead of email addresses
-- **Full Gmail API** - Search, read, send, label, and manage emails
+- **Full Gmail API** - Search, read, send, label, download attachments, and manage emails
 - **Batch operations** - Bulk modify or delete emails efficiently
 - **Auto token refresh** - Handles OAuth token refresh automatically
 
@@ -83,6 +83,7 @@ All tools that interact with Gmail require an `account` parameter (alias or emai
 |------|-------------|
 | `search_emails` | Search emails using Gmail query syntax |
 | `read_email` | Get full content of an email by ID |
+| `download_attachment` | Download an attachment by message and attachment ID |
 | `send_email` | Send a new email |
 | `draft_email` | Create a draft |
 | `modify_email` | Add/remove labels, mark read/unread |
@@ -97,6 +98,19 @@ All tools that interact with Gmail require an `account` parameter (alias or emai
 | `create_label` | Create a new label |
 | `delete_label` | Delete a label |
 
+### Attachment Downloads
+
+```
+download_attachment({
+  account: "work",
+  messageId: "18f...",
+  attachmentId: "ANGjdJ...",
+  filename: "report.pdf"
+})
+```
+
+Downloaded attachments are saved under `~/.gmail-mcp/downloads/<account>/<messageId>/` with private directory and file permissions.
+
 ## Configuration
 
 Credentials are stored in `~/.gmail-mcp/`:
@@ -105,6 +119,10 @@ Credentials are stored in `~/.gmail-mcp/`:
 ~/.gmail-mcp/
 ├── config.json           # Account aliases and settings
 ├── oauth-keys.json       # Your Google OAuth app credentials
+├── downloads/            # Private attachment downloads
+│   └── work/
+│       └── <messageId>/
+│           └── report.pdf
 └── accounts/
     ├── work/
     │   └── credentials.json

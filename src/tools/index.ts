@@ -1,5 +1,10 @@
 import { Tool, CallToolRequest } from "@modelcontextprotocol/sdk/types.js";
 import { AccountManager } from "../accounts.js";
+import {
+  findAttachmentPart,
+  resolveAttachmentFilename,
+  saveAttachmentData,
+} from "../attachments.js";
 import { GmailClient } from "../gmail.js";
 import { authenticateAccount } from "../oauth.js";
 
@@ -74,6 +79,32 @@ export const tools: Tool[] = [
         },
       },
       required: ["account", "messageId"],
+    },
+  },
+  {
+    name: "download_attachment",
+    description: "Download a Gmail attachment to a private local directory",
+    inputSchema: {
+      type: "object",
+      properties: {
+        account: {
+          type: "string",
+          description: "Account alias or email to use",
+        },
+        messageId: {
+          type: "string",
+          description: "The ID of the email message",
+        },
+        attachmentId: {
+          type: "string",
+          description: "The attachment ID from the message payload",
+        },
+        filename: {
+          type: "string",
+          description: "Optional basename-only override for the saved file",
+        },
+      },
+      required: ["account", "messageId", "attachmentId"],
     },
   },
   {
@@ -252,6 +283,81 @@ export async function handleToolCall(
         return {
           content: [
             { type: "text", text: JSON.stringify(response.data, null, 2) },
+          ],
+        };
+      }
+
+      case "download_attachment": {
+        const { account, messageId, attachmentId, filename } = args as {
+          account: string;
+          messageId: string;
+          attachmentId: string;
+          filename?: string;
+        };
+        const accountConfig = accountManager.getAccount(account);
+        if (!accountConfig) {
+          throw new Error(`Account not found: ${account}`);
+        }
+
+        const client = await gmailClient.getClient(account);
+        const message = await client.users.messages.get({
+          userId: "me",
+          id: messageId,
+          format: "full",
+        });
+        const attachmentPart = findAttachmentPart(
+          message.data.payload,
+          attachmentId
+        );
+        if (!attachmentPart) {
+          throw new Error(
+            `Attachment ID not found in message payload: ${attachmentId}`
+          );
+        }
+
+        const attachment = await client.users.messages.attachments.get({
+          userId: "me",
+          messageId,
+          id: attachmentId,
+        });
+        if (attachment.data.data == null) {
+          throw new Error(
+            `Gmail returned no data for attachment ID: ${attachmentId}`
+          );
+        }
+
+        const data = Buffer.from(attachment.data.data, "base64url");
+        const resolvedFilename = resolveAttachmentFilename({
+          attachmentId,
+          messagePartFilename: attachmentPart.filename,
+          overrideFilename: filename,
+        });
+        const saved = saveAttachmentData({
+          accountAlias: accountConfig.alias,
+          messageId,
+          filename: resolvedFilename,
+          data,
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  account: accountConfig.alias,
+                  messageId,
+                  attachmentId,
+                  filename: saved.filename,
+                  mimeType:
+                    attachmentPart.mimeType || "application/octet-stream",
+                  size: data.length,
+                  path: saved.path,
+                },
+                null,
+                2
+              ),
+            },
           ],
         };
       }
