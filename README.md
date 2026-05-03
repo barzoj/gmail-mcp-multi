@@ -1,16 +1,43 @@
 # gmail-mcp-multi
 
-A Gmail MCP server with native multi-account support. Manage multiple Gmail accounts from a single server instance.
+A Gmail MCP server with native multi-account support. It lets an MCP client use one server process for multiple Gmail accounts by passing an `account` alias or email address on each Gmail tool call.
 
-Unlike other Gmail MCPs that require running separate server instances per account, this one lets you specify which account to use on each tool call—making it easy to manage personal and work inboxes from Claude Code, Cursor, or any MCP client.
+## Current Status
 
-## Features
+This project currently supports Gmail account authentication, mailbox search, full message reads, label listing, and private local attachment downloads.
 
-- **Multi-account support** - Single server instance, unlimited Gmail accounts
-- **Account aliases** - Use friendly names like "work" or "personal" instead of email addresses
-- **Full Gmail API** - Search, read, send, label, download attachments, and manage emails
-- **Batch operations** - Bulk modify or delete emails efficiently
-- **Auto token refresh** - Handles OAuth token refresh automatically
+Some tool schemas are still exposed before their handlers are implemented. See [Not Yet Working](#not-yet-working) before relying on mutating email operations.
+
+## What Works
+
+- Multi-account configuration using local aliases such as `work` or `personal`.
+- OAuth authentication through the `authenticate` MCP tool or the `gmail-mcp-multi-auth` CLI.
+- Gmail token refresh for authenticated accounts.
+- Searching messages with Gmail query syntax.
+- Reading full Gmail messages, including payload parts and attachment metadata.
+- Listing labels for an account.
+- Downloading attachments to a private local directory.
+- Attachment downloads by exact filename, current Gmail attachment ID, part ID, `X-Attachment-Id`, or `Content-ID`.
+- Recursive traversal of nested MIME parts.
+- Collision-safe attachment saves, for example `report.pdf`, `report-1.pdf`, `report-2.pdf`.
+
+## Not Yet Working
+
+These tool schemas are currently advertised, but the server handler does not implement them yet. Calling them returns `Unknown tool: <name>`.
+
+| Tool | Current behavior |
+|------|------------------|
+| `send_email` | Schema exists, handler is missing |
+| `modify_email` | Schema exists, handler is missing |
+
+These capabilities are not currently exposed by the tool list:
+
+- Create draft
+- Delete or trash email
+- Batch modify email
+- Batch delete email
+- Create label
+- Delete label
 
 ## Installation
 
@@ -19,29 +46,37 @@ npm install -g gmail-mcp-multi
 ```
 
 Or run directly with npx:
+
 ```bash
 npx gmail-mcp-multi
 ```
 
-## Quick Start
+For local development from this repository:
 
-### 1. Set up Google Cloud OAuth
+```bash
+npm install
+npm run build
+npm install -g .
+```
 
-You'll need OAuth credentials from Google Cloud Console:
+Restart any already-running MCP client or server process after rebuilding or reinstalling.
 
-1. Go to [Google Cloud Console](https://console.cloud.google.com/)
-2. Create a new project (or use existing)
-3. Enable the Gmail API
-4. Create OAuth 2.0 credentials (Desktop app type)
-5. Download the credentials JSON
+## OAuth Setup
 
-### 2. Configure the MCP
+Create OAuth credentials in Google Cloud:
 
-Create `~/.gmail-mcp/oauth-keys.json` with your OAuth credentials.
+1. Open Google Cloud Console.
+2. Create or choose a project.
+3. Enable the Gmail API.
+4. Create OAuth 2.0 credentials for a Desktop app.
+5. Save the credentials JSON as `~/.gmail-mcp/oauth-keys.json`.
 
-### 3. Add to your MCP client
+Current runtime behavior expects an `installed` OAuth client in `oauth-keys.json`.
 
-**Claude Code (`~/.claude/settings.json`):**
+## MCP Client Configuration
+
+Example Claude Code configuration:
+
 ```json
 {
   "mcpServers": {
@@ -53,83 +88,155 @@ Create `~/.gmail-mcp/oauth-keys.json` with your OAuth credentials.
 }
 ```
 
-### 4. Authenticate accounts
+If you installed globally from a local checkout, you can also use:
 
-Once the MCP is running, use the `authenticate` tool:
+```json
+{
+  "mcpServers": {
+    "gmail": {
+      "command": "gmail-mcp-multi"
+    }
+  }
+}
 ```
+
+## Authentication
+
+Authenticate from an MCP client:
+
+```js
 authenticate({ alias: "work", email: "you@company.com" })
-authenticate({ alias: "personal", email: "you@gmail.com" })
+authenticate({ alias: "personal", email: "you@example.com" })
 ```
 
-### 5. Use it!
+Or authenticate with the CLI:
 
+```bash
+gmail-mcp-multi-auth --alias personal --email you@example.com
 ```
-search_emails({ account: "work", query: "in:inbox is:unread" })
-search_emails({ account: "personal", query: "from:mom" })
+
+The `access` option accepts `readonly`, `modify`, or `full`; it defaults to `readonly`. The working read and download tools only require readonly access.
+
+## Working Tools
+
+All Gmail tools require an `account` value unless noted otherwise. The value can be an account alias or configured email address.
+
+### `list_accounts`
+
+Lists configured accounts and whether local credentials exist.
+
+```js
+list_accounts()
 ```
 
-## Tools
+### `authenticate`
 
-All tools that interact with Gmail require an `account` parameter (alias or email).
+Adds or re-authenticates an account. Opens a browser when available and also prints the OAuth URL.
 
-### Account Management
-| Tool | Description |
-|------|-------------|
-| `list_accounts` | List all configured accounts and auth status |
-| `authenticate` | Add or re-authenticate an account |
-
-### Email Operations
-| Tool | Description |
-|------|-------------|
-| `search_emails` | Search emails using Gmail query syntax |
-| `read_email` | Get full content of an email by ID |
-| `download_attachment` | Download an attachment by filename or attachment ID |
-| `send_email` | Send a new email |
-| `draft_email` | Create a draft |
-| `modify_email` | Add/remove labels, mark read/unread |
-| `delete_email` | Trash or permanently delete |
-| `batch_modify_emails` | Bulk label operations |
-| `batch_delete_emails` | Bulk delete |
-
-### Label Management
-| Tool | Description |
-|------|-------------|
-| `list_labels` | Get all labels for an account |
-| `create_label` | Create a new label |
-| `delete_label` | Delete a label |
-
-### Attachment Downloads
-
+```js
+authenticate({
+  alias: "personal",
+  email: "you@example.com",
+  access: "readonly"
+})
 ```
+
+### `search_emails`
+
+Searches Gmail using Gmail query syntax and returns message IDs plus `From`, `To`, `Subject`, and `Date` metadata.
+
+```js
+search_emails({
+  account: "personal",
+  query: "in:inbox has:attachment",
+  maxResults: 10
+})
+```
+
+### `read_email`
+
+Fetches the full Gmail message with `format: "full"`. The returned payload includes nested MIME parts, headers, filenames, MIME types, part IDs, and `body.attachmentId` values when Gmail provides them.
+
+```js
+read_email({
+  account: "personal",
+  messageId: "18f..."
+})
+```
+
+### `download_attachment`
+
+Downloads one attachment to disk and returns JSON metadata:
+
+```json
+{
+  "account": "personal",
+  "messageId": "18f...",
+  "attachmentId": "...",
+  "filename": "report.pdf",
+  "mimeType": "application/pdf",
+  "size": 12345,
+  "path": "/Users/you/.gmail-mcp/downloads/personal/18f.../report.pdf"
+}
+```
+
+Recommended filename-based usage:
+
+```js
 download_attachment({
-  account: "work",
+  account: "personal",
   messageId: "18f...",
   filename: "report.pdf"
 })
 ```
 
-You can also pass an `attachmentId`, `partId`, `X-Attachment-Id`, or `Content-ID` from a message payload:
+ID-based usage:
 
-```
+```js
 download_attachment({
-  account: "work",
+  account: "personal",
   messageId: "18f...",
   attachmentId: "ANGjdJ..."
 })
 ```
 
-Downloaded attachments are saved under `~/.gmail-mcp/downloads/<account>/<messageId>/` with private directory and file permissions.
+Attachment resolution behavior:
 
-## Configuration
+- If `filename` is provided, the server re-fetches the message, finds the exact filename in nested MIME parts, and immediately downloads using the current `body.attachmentId` from that same payload.
+- If only `attachmentId` is provided, the server first tries `users.messages.attachments.get` directly with that ID.
+- If direct ID download fails, the server re-fetches the payload and matches the supplied value against current `body.attachmentId`, `partId`, `X-Attachment-Id`, or `Content-ID`.
+- If direct ID download succeeds but Gmail's fresh payload no longer contains that same ID, the server tries to recover the filename by matching the unique downloaded byte size against current attachment parts.
+- If no attachment matches, the error includes available attachment filenames and part IDs.
 
-Credentials are stored in `~/.gmail-mcp/`:
+Saved files:
 
+- Are written under `~/.gmail-mcp/downloads/<account>/<messageId>/`.
+- Use private directories with mode `0700`.
+- Use private files with mode `0600`.
+- Never accept an arbitrary output directory.
+- Sanitize filenames to prevent path traversal.
+- Auto-rename on collision.
+
+### `list_labels`
+
+Lists Gmail labels for an account.
+
+```js
+list_labels({
+  account: "personal"
+})
 ```
+
+## Local Files
+
+Credentials and downloads are stored under `~/.gmail-mcp/`:
+
+```text
 ~/.gmail-mcp/
-├── config.json           # Account aliases and settings
-├── oauth-keys.json       # Your Google OAuth app credentials
-├── downloads/            # Private attachment downloads
-│   └── work/
+├── config.json
+├── oauth-keys.json
+├── downloads/
+│   └── personal/
 │       └── <messageId>/
 │           └── report.pdf
 └── accounts/
@@ -138,6 +245,8 @@ Credentials are stored in `~/.gmail-mcp/`:
     └── personal/
         └── credentials.json
 ```
+
+The repository `.gitignore` excludes credentials and build output. Do not commit real OAuth keys, account credentials, downloaded attachments, or mailbox data.
 
 ## Development
 
@@ -149,9 +258,7 @@ npm run build
 npm run dev
 ```
 
-## Contributing
-
-Contributions welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for guidelines.
+There is currently no `npm test` script. Use `npm run build` as the baseline verification.
 
 ## License
 
