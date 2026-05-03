@@ -14,6 +14,16 @@ export interface SavedAttachmentFile {
   path: string;
 }
 
+export interface AttachmentPartInfo {
+  part: gmail_v1.Schema$MessagePart;
+  filename?: string | null;
+  mimeType?: string | null;
+  partId?: string | null;
+  attachmentId?: string | null;
+  xAttachmentId?: string;
+  contentId?: string;
+}
+
 export function findAttachmentPart(
   part: gmail_v1.Schema$MessagePart | undefined,
   attachmentId: string
@@ -34,6 +44,78 @@ export function findAttachmentPart(
   }
 
   return undefined;
+}
+
+export function collectAttachmentParts(
+  part: gmail_v1.Schema$MessagePart | undefined
+): AttachmentPartInfo[] {
+  if (!part) {
+    return [];
+  }
+
+  const current = getAttachmentPartInfo(part);
+  const children = (part.parts || []).flatMap((child) =>
+    collectAttachmentParts(child)
+  );
+
+  return current ? [current, ...children] : children;
+}
+
+export function findAttachmentPartByFilename(
+  part: gmail_v1.Schema$MessagePart | undefined,
+  filename: string
+): AttachmentPartInfo | undefined {
+  return collectAttachmentParts(part).find((info) => info.filename === filename);
+}
+
+export function findAttachmentPartByAnyId(
+  part: gmail_v1.Schema$MessagePart | undefined,
+  id: string
+): AttachmentPartInfo | undefined {
+  return collectAttachmentParts(part).find((info) =>
+    getAttachmentPartIds(info).includes(id)
+  );
+}
+
+export function findAttachmentPartByUniqueSize(
+  part: gmail_v1.Schema$MessagePart | undefined,
+  size: number
+): AttachmentPartInfo | undefined {
+  const matches = collectAttachmentParts(part).filter(
+    (info) => info.part.body?.size === size
+  );
+
+  return matches.length === 1 ? matches[0] : undefined;
+}
+
+export function describeAvailableAttachments(
+  part: gmail_v1.Schema$MessagePart | undefined
+): string {
+  const attachments = collectAttachmentParts(part);
+  if (attachments.length === 0) {
+    return "No attachments found in message payload.";
+  }
+
+  return `Available attachments: ${attachments
+    .map((info) => {
+      const details = [
+        `filename=${JSON.stringify(info.filename || "")}`,
+        `partId=${JSON.stringify(info.partId || "")}`,
+      ];
+
+      if (info.attachmentId) {
+        details.push(`attachmentId=${JSON.stringify(info.attachmentId)}`);
+      }
+      if (info.xAttachmentId) {
+        details.push(`xAttachmentId=${JSON.stringify(info.xAttachmentId)}`);
+      }
+      if (info.contentId) {
+        details.push(`contentId=${JSON.stringify(info.contentId)}`);
+      }
+
+      return details.join(", ");
+    })
+    .join("; ")}`;
 }
 
 export function sanitizeAttachmentFilename(
@@ -111,6 +193,54 @@ export function getAttachmentDownloadDirectory(
 
 function sanitizePathSegment(value: string, fallback: string): string {
   return sanitizeAttachmentFilename(value) || fallback;
+}
+
+function getAttachmentPartInfo(
+  part: gmail_v1.Schema$MessagePart
+): AttachmentPartInfo | undefined {
+  const xAttachmentId = getHeaderValue(part, "X-Attachment-Id");
+  const contentId = getHeaderValue(part, "Content-ID");
+
+  if (!part.filename && !part.body?.attachmentId && !xAttachmentId && !contentId) {
+    return undefined;
+  }
+
+  return {
+    part,
+    filename: part.filename,
+    mimeType: part.mimeType,
+    partId: part.partId,
+    attachmentId: part.body?.attachmentId,
+    xAttachmentId,
+    contentId,
+  };
+}
+
+function getHeaderValue(
+  part: gmail_v1.Schema$MessagePart,
+  headerName: string
+): string | undefined {
+  return part.headers?.find(
+    (header) => header.name?.toLowerCase() === headerName.toLowerCase()
+  )?.value || undefined;
+}
+
+function getAttachmentPartIds(info: AttachmentPartInfo): string[] {
+  return [
+    info.attachmentId,
+    info.partId,
+    info.xAttachmentId,
+    info.contentId,
+    stripAngleBrackets(info.contentId),
+  ].filter((value): value is string => Boolean(value));
+}
+
+function stripAngleBrackets(value?: string): string | undefined {
+  if (!value?.startsWith("<") || !value.endsWith(">")) {
+    return undefined;
+  }
+
+  return value.slice(1, -1);
 }
 
 function ensurePrivateDirectory(directory: string): void {

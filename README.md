@@ -83,7 +83,7 @@ All tools that interact with Gmail require an `account` parameter (alias or emai
 |------|-------------|
 | `search_emails` | Search emails using Gmail query syntax |
 | `read_email` | Get full content of an email by ID |
-| `download_attachment` | Download an attachment by message and attachment ID |
+| `download_attachment` | Download an attachment by filename or attachment ID |
 | `send_email` | Send a new email |
 | `draft_email` | Create a draft |
 | `modify_email` | Add/remove labels, mark read/unread |
@@ -104,8 +104,17 @@ All tools that interact with Gmail require an `account` parameter (alias or emai
 download_attachment({
   account: "work",
   messageId: "18f...",
-  attachmentId: "ANGjdJ...",
   filename: "report.pdf"
+})
+```
+
+You can also pass an `attachmentId`, `partId`, `X-Attachment-Id`, or `Content-ID` from a message payload:
+
+```
+download_attachment({
+  account: "work",
+  messageId: "18f...",
+  attachmentId: "ANGjdJ..."
 })
 ```
 
