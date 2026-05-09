@@ -41,20 +41,38 @@ These capabilities are not currently exposed by the tool list:
 
 ## Installation
 
-```bash
-npm install -g gmail-mcp-multi
-```
+This package is not published to the npm registry yet. Install it from a local checkout.
 
-Or run directly with npx:
-
-```bash
-npx gmail-mcp-multi
-```
-
-For local development from this repository:
+Build first, then install globally from the repository root. The global CLI commands point at files in `dist/`, so `npm install -g .` must be run after `npm run build`:
 
 ```bash
 npm install
+npm run build
+npm install -g .
+```
+
+This creates global commands that can be reused by any MCP client:
+
+```bash
+gmail-mcp-multi
+gmail-mcp-multi-auth
+```
+
+After that, any MCP client can reuse the same globally installed server by running `gmail-mcp-multi` directly:
+
+```json
+{
+  "mcpServers": {
+    "gmail": {
+      "command": "gmail-mcp-multi"
+    }
+  }
+}
+```
+
+If you change the source later, rebuild and reinstall so the global command uses the updated `dist/` files:
+
+```bash
 npm run build
 npm install -g .
 ```
@@ -75,20 +93,7 @@ Current runtime behavior expects an `installed` OAuth client in `oauth-keys.json
 
 ## MCP Client Configuration
 
-Example Claude Code configuration:
-
-```json
-{
-  "mcpServers": {
-    "gmail": {
-      "command": "npx",
-      "args": ["gmail-mcp-multi"]
-    }
-  }
-}
-```
-
-If you installed globally from a local checkout, you can also use:
+Example Claude Code configuration after installing globally from this checkout:
 
 ```json
 {
