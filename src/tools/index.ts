@@ -51,7 +51,8 @@ export const tools: Tool[] = [
   },
   {
     name: "search_emails",
-    description: "Search for emails using Gmail query syntax",
+    description:
+      "Search or list Gmail messages using Gmail search syntax. Use this as the mailbox listing tool: queries like 'in:inbox', 'in:anywhere newer_than:7d', 'from:alice@example.com', or 'subject:invoice' return lightweight message metadata; use read_email with a returned id for full content.",
     inputSchema: {
       type: "object",
       properties: {
@@ -61,11 +62,23 @@ export const tools: Tool[] = [
         },
         query: {
           type: "string",
-          description: "Gmail search query (e.g., 'in:inbox is:unread')",
+          description:
+            "Gmail search query. Use 'in:inbox' to list inbox messages, 'in:anywhere' for all mail, or filters like 'is:unread', 'from:', 'to:', 'subject:', 'after:', 'before:', 'newer_than:', 'older_than:', 'has:attachment'.",
         },
         maxResults: {
           type: "number",
-          description: "Maximum number of results (default: 10)",
+          description:
+            "Maximum number of lightweight results to return for this page (default: 10, max: 500)",
+        },
+        pageToken: {
+          type: "string",
+          description:
+            "Token returned by a previous search_emails call to fetch the next page",
+        },
+        includeSpamTrash: {
+          type: "boolean",
+          description:
+            "Whether to include messages from Spam and Trash (default: false)",
         },
       },
       required: ["account", "query"],
@@ -285,16 +298,33 @@ export async function handleToolCall(
       }
 
       case "search_emails": {
-        const { account, query, maxResults = 10 } = args as {
+        const {
+          account,
+          query,
+          maxResults = 10,
+          pageToken,
+          includeSpamTrash = false,
+        } = args as {
           account: string;
           query: string;
           maxResults?: number;
+          pageToken?: string;
+          includeSpamTrash?: boolean;
         };
+        if (!query || query.trim() === "") {
+          throw new Error("query is required");
+        }
+        if (!Number.isInteger(maxResults) || maxResults < 1 || maxResults > 500) {
+          throw new Error("maxResults must be an integer between 1 and 500");
+        }
+
         const client = await gmailClient.getClient(account);
         const response = await client.users.messages.list({
           userId: "me",
-          q: query,
+          q: query.trim(),
           maxResults,
+          pageToken,
+          includeSpamTrash,
         });
 
         const messages = response.data.messages || [];
@@ -304,20 +334,49 @@ export async function handleToolCall(
               userId: "me",
               id: msg.id!,
               format: "metadata",
-              metadataHeaders: ["From", "To", "Subject", "Date"],
+              metadataHeaders: [
+                "From",
+                "To",
+                "Cc",
+                "Subject",
+                "Date",
+                "Message-ID",
+              ],
             });
             const headers = full.data.payload?.headers || [];
             return {
               id: msg.id,
-              subject: headers.find((h) => h.name === "Subject")?.value,
-              from: headers.find((h) => h.name === "From")?.value,
-              date: headers.find((h) => h.name === "Date")?.value,
+              threadId: full.data.threadId,
+              labelIds: full.data.labelIds || [],
+              snippet: full.data.snippet,
+              internalDate: full.data.internalDate,
+              subject: getHeaderValue(headers, "Subject"),
+              from: getHeaderValue(headers, "From"),
+              to: getHeaderValue(headers, "To"),
+              cc: getHeaderValue(headers, "Cc"),
+              date: getHeaderValue(headers, "Date"),
+              rfcMessageId: getHeaderValue(headers, "Message-ID"),
             };
           })
         );
 
         return {
-          content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  query: query.trim(),
+                  count: results.length,
+                  resultSizeEstimate: response.data.resultSizeEstimate,
+                  nextPageToken: response.data.nextPageToken,
+                  messages: results,
+                },
+                null,
+                2
+              ),
+            },
+          ],
         };
       }
 

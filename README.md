@@ -151,7 +151,7 @@ authenticate({
 
 ### `search_emails`
 
-Searches Gmail using Gmail query syntax and returns message IDs plus `From`, `To`, `Subject`, and `Date` metadata.
+Searches or lists Gmail messages using Gmail query syntax. This is the mailbox listing tool: use broad queries such as `in:inbox` or `in:anywhere` when you want recent messages, then call `read_email` with a returned `id` when you need full message content.
 
 ```js
 search_emails({
@@ -159,6 +159,49 @@ search_emails({
   query: "in:inbox has:attachment",
   maxResults: 10
 })
+```
+
+Useful query examples:
+
+- `in:inbox` lists inbox messages.
+- `in:anywhere newer_than:7d` searches all mail from the last seven days.
+- `is:unread`, `from:alice@example.com`, `to:bob@example.com`, `subject:invoice`, `has:attachment`, `after:2026/01/01`, and `before:2026/02/01` use Gmail's native search filters.
+
+Pagination:
+
+```js
+search_emails({
+  account: "personal",
+  query: "in:anywhere",
+  maxResults: 25,
+  pageToken: "..."
+})
+```
+
+Returns lightweight metadata:
+
+```json
+{
+  "query": "in:inbox has:attachment",
+  "count": 1,
+  "resultSizeEstimate": 12,
+  "nextPageToken": "...",
+  "messages": [
+    {
+      "id": "18f...",
+      "threadId": "18e...",
+      "labelIds": ["INBOX", "IMPORTANT"],
+      "snippet": "The preview text from Gmail...",
+      "internalDate": "1760000000000",
+      "subject": "Quarterly report",
+      "from": "Alice <alice@example.com>",
+      "to": "you@example.com",
+      "cc": "team@example.com",
+      "date": "Fri, 1 May 2026 09:00:00 +0000",
+      "rfcMessageId": "<message-id@example.com>"
+    }
+  ]
+}
 ```
 
 ### `read_email`
