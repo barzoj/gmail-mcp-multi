@@ -16,6 +16,7 @@ Some mutating capabilities are intentionally not exposed. See [Not Yet Working](
 - Searching and listing messages with Gmail query syntax.
 - Listing conversation thread IDs with Gmail query syntax.
 - Reading full Gmail messages, including payload parts and attachment metadata.
+- Listing attachment metadata for a message without downloading files.
 - Listing labels for an account.
 - Creating standalone plain-text Gmail drafts.
 - Creating threaded plain-text reply drafts with reply-all recipient defaults.
@@ -59,6 +60,8 @@ This creates global commands that can be reused by any MCP client:
 gmail-mcp-multi
 gmail-mcp-multi-auth
 ```
+
+`gmail-mcp-multi` is an MCP stdio server, not a mailbox CLI with subcommands. Mailbox operations such as `search_emails`, `read_email`, `list_attachments`, and `download_attachment` are exposed as MCP tools to the connected client. The only standalone helper CLI is `gmail-mcp-multi-auth`.
 
 After that, any MCP client can reuse the same globally installed server by running `gmail-mcp-multi` directly:
 
@@ -256,13 +259,45 @@ Returns lightweight thread metadata:
 
 ### `read_email`
 
-Fetches the full Gmail message with `format: "full"`. The returned payload includes nested MIME parts, headers, filenames, MIME types, part IDs, and `body.attachmentId` values when Gmail provides them.
+Fetches the full Gmail message with `format: "full"`. The returned payload includes nested MIME parts, headers, filenames, MIME types, part IDs, and `body.attachmentId` values when Gmail provides them. Use this when you need full message structure or body content; use `list_attachments` when you only need attachment names and IDs.
 
 ```js
 read_email({
   account: "personal",
   messageId: "18f..."
 })
+```
+
+### `list_attachments`
+
+Lists attachment metadata for a message without downloading files. This is the quickest way to discover attachment names and identifiers before calling `download_attachment`.
+
+```js
+list_attachments({
+  account: "personal",
+  messageId: "18f..."
+})
+```
+
+Returns:
+
+```json
+{
+  "account": "personal",
+  "messageId": "18f...",
+  "count": 1,
+  "attachments": [
+    {
+      "filename": "report.pdf",
+      "mimeType": "application/pdf",
+      "size": 12345,
+      "partId": "2",
+      "attachmentId": "ANGjdJ...",
+      "xAttachmentId": "f_...",
+      "contentId": "<f_...>"
+    }
+  ]
+}
 ```
 
 ### `download_attachment`

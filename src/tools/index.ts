@@ -6,6 +6,7 @@ import Mail from "nodemailer/lib/mailer/index.js";
 import { AccountManager } from "../accounts.js";
 import {
   AttachmentPartInfo,
+  collectAttachmentParts,
   describeAvailableAttachments,
   findAttachmentPartByAnyId,
   findAttachmentPartByFilename,
@@ -191,7 +192,8 @@ export const tools: Tool[] = [
   },
   {
     name: "read_email",
-    description: "Get the full content of an email by ID",
+    description:
+      "Read a full Gmail message by message id. Returns Gmail's full payload including headers, body MIME parts, attachment filenames, partIds, and body.attachmentId values when present. Use list_attachments for a concise attachment inventory.",
     inputSchema: {
       type: "object",
       properties: {
@@ -208,8 +210,28 @@ export const tools: Tool[] = [
     },
   },
   {
+    name: "list_attachments",
+    description:
+      "List attachment metadata for a Gmail message without downloading files. Returns attachment filenames, MIME types, sizes, partIds, Gmail attachmentIds, X-Attachment-Id, and Content-ID values. Use download_attachment with filename or attachmentId to save a file locally.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        account: {
+          type: "string",
+          description: "Account alias or email to use",
+        },
+        messageId: {
+          type: "string",
+          description: "The Gmail message ID returned by search/list tools",
+        },
+      },
+      required: ["account", "messageId"],
+    },
+  },
+  {
     name: "download_attachment",
-    description: "Download a Gmail attachment to a private local directory",
+    description:
+      "Download one Gmail attachment to a private local directory. First call list_attachments or read_email to discover available filenames, partIds, and attachmentIds. Provide either exact filename or an attachment identifier.",
     inputSchema: {
       type: "object",
       properties: {
@@ -561,6 +583,43 @@ export async function handleToolCall(
         return {
           content: [
             { type: "text", text: JSON.stringify(response.data, null, 2) },
+          ],
+        };
+      }
+
+      case "list_attachments": {
+        const { account, messageId } = args as {
+          account: string;
+          messageId: string;
+        };
+        const accountConfig = getAccountConfig(accountManager, account);
+        const client = await gmailClient.getClient(account);
+        const payload = await getMessagePayload(client, messageId);
+        const attachments = collectAttachmentParts(payload).map((info) => ({
+          filename: info.filename,
+          mimeType: info.mimeType,
+          size: info.part.body?.size,
+          partId: info.partId,
+          attachmentId: info.attachmentId,
+          xAttachmentId: info.xAttachmentId,
+          contentId: info.contentId,
+        }));
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  account: accountConfig.alias,
+                  messageId,
+                  count: attachments.length,
+                  attachments,
+                },
+                null,
+                2
+              ),
+            },
           ],
         };
       }
