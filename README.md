@@ -13,7 +13,8 @@ Some mutating capabilities are intentionally not exposed. See [Not Yet Working](
 - Multi-account configuration using local aliases such as `work` or `personal`.
 - OAuth authentication through the `authenticate` MCP tool or the `gmail-mcp-multi-auth` CLI.
 - Gmail token refresh for authenticated accounts.
-- Searching messages with Gmail query syntax.
+- Searching and listing messages with Gmail query syntax.
+- Listing conversation thread IDs with Gmail query syntax.
 - Reading full Gmail messages, including payload parts and attachment metadata.
 - Listing labels for an account.
 - Creating standalone plain-text Gmail drafts.
@@ -149,15 +150,32 @@ authenticate({
 })
 ```
 
-### `search_emails`
+### `search_emails`, `search_messages`, and `list_messages`
 
-Searches or lists Gmail messages using Gmail query syntax. This is the mailbox listing tool: use broad queries such as `in:inbox` or `in:anywhere` when you want recent messages, then call `read_email` with a returned `id` when you need full message content.
+Searches or lists Gmail messages using Gmail query syntax. These are the mailbox message listing tools: use broad queries such as `in:inbox` or `in:anywhere` when you want recent messages, then call `read_email` with a returned `id` when you need full message content.
+
+`search_emails` and `search_messages` are equivalent and require `query`. `list_messages` defaults to `query: "in:inbox"` when no query is provided.
 
 ```js
 search_emails({
   account: "personal",
   query: "in:inbox has:attachment",
   maxResults: 10
+})
+```
+
+Equivalent message-listing calls:
+
+```js
+search_messages({
+  account: "personal",
+  query: "in:anywhere newer_than:7d",
+  maxResults: 25
+})
+
+list_messages({
+  account: "personal",
+  maxResults: 25
 })
 ```
 
@@ -199,6 +217,38 @@ Returns lightweight metadata:
       "cc": "team@example.com",
       "date": "Fri, 1 May 2026 09:00:00 +0000",
       "rfcMessageId": "<message-id@example.com>"
+    }
+  ]
+}
+```
+
+### `list_threads`
+
+Lists Gmail conversation threads directly and returns thread IDs. It defaults to `query: "in:inbox"` when no query is provided. Use this when you need to discover the latest conversation/thread ID before deciding which message to read.
+
+```js
+list_threads({
+  account: "personal",
+  query: "in:anywhere newer_than:7d",
+  maxResults: 10
+})
+```
+
+Returns lightweight thread metadata:
+
+```json
+{
+  "tool": "list_threads",
+  "query": "in:anywhere newer_than:7d",
+  "count": 1,
+  "resultSizeEstimate": 3,
+  "nextPageToken": "...",
+  "threads": [
+    {
+      "id": "18e...",
+      "threadId": "18e...",
+      "snippet": "The preview text from Gmail...",
+      "historyId": "123456"
     }
   ]
 }

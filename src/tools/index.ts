@@ -85,6 +85,111 @@ export const tools: Tool[] = [
     },
   },
   {
+    name: "search_messages",
+    description:
+      "Alias for search_emails. Search Gmail messages with Gmail query syntax and return lightweight metadata including message id and threadId. Use read_email with a returned id for full content.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        account: {
+          type: "string",
+          description: "Account alias or email to use",
+        },
+        query: {
+          type: "string",
+          description:
+            "Gmail search query, for example 'in:inbox', 'in:anywhere newer_than:7d', 'from:alice@example.com', 'subject:invoice', or 'has:attachment'.",
+        },
+        maxResults: {
+          type: "number",
+          description:
+            "Maximum number of lightweight results to return for this page (default: 10, max: 500)",
+        },
+        pageToken: {
+          type: "string",
+          description:
+            "Token returned by a previous search_messages or search_emails call to fetch the next page",
+        },
+        includeSpamTrash: {
+          type: "boolean",
+          description:
+            "Whether to include messages from Spam and Trash (default: false)",
+        },
+      },
+      required: ["account", "query"],
+    },
+  },
+  {
+    name: "list_messages",
+    description:
+      "List Gmail messages from the mailbox. Defaults to query 'in:inbox'. Provide query to list another mailbox/search such as 'in:anywhere', 'is:unread', or 'newer_than:7d'. Returns message ids, threadIds, snippets, labels, and headers; use read_email with a returned id for full content.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        account: {
+          type: "string",
+          description: "Account alias or email to use",
+        },
+        query: {
+          type: "string",
+          description:
+            "Optional Gmail search query. Defaults to 'in:inbox'. Use 'in:anywhere' for all mail.",
+        },
+        maxResults: {
+          type: "number",
+          description:
+            "Maximum number of lightweight results to return for this page (default: 10, max: 500)",
+        },
+        pageToken: {
+          type: "string",
+          description:
+            "Token returned by a previous list_messages call to fetch the next page",
+        },
+        includeSpamTrash: {
+          type: "boolean",
+          description:
+            "Whether to include messages from Spam and Trash (default: false)",
+        },
+      },
+      required: ["account"],
+    },
+  },
+  {
+    name: "list_threads",
+    description:
+      "List Gmail conversation threads and return thread IDs directly. Defaults to query 'in:inbox'. Provide query to find threads by mailbox/search such as 'in:anywhere newer_than:7d', 'from:alice@example.com', or 'subject:invoice'. Use search_messages/list_messages for message IDs or read_email with a message id for full content.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        account: {
+          type: "string",
+          description: "Account alias or email to use",
+        },
+        query: {
+          type: "string",
+          description:
+            "Optional Gmail search query for threads. Defaults to 'in:inbox'. Use 'in:anywhere' for all mail.",
+        },
+        maxResults: {
+          type: "number",
+          description:
+            "Maximum number of thread results to return for this page (default: 10, max: 500)",
+        },
+        pageToken: {
+          type: "string",
+          description:
+            "Token returned by a previous list_threads call to fetch the next page",
+        },
+        includeSpamTrash: {
+          type: "boolean",
+          description:
+            "Whether to include threads from Spam and Trash (default: false)",
+        },
+      },
+      required: ["account"],
+    },
+  },
+  {
     name: "read_email",
     description: "Get the full content of an email by ID",
     inputSchema: {
@@ -297,10 +402,12 @@ export async function handleToolCall(
         };
       }
 
-      case "search_emails": {
+      case "search_emails":
+      case "search_messages":
+      case "list_messages": {
         const {
           account,
-          query,
+          query = name === "list_messages" ? "in:inbox" : undefined,
           maxResults = 10,
           pageToken,
           includeSpamTrash = false,
@@ -366,11 +473,70 @@ export async function handleToolCall(
               type: "text",
               text: JSON.stringify(
                 {
+                  tool: name,
                   query: query.trim(),
                   count: results.length,
                   resultSizeEstimate: response.data.resultSizeEstimate,
                   nextPageToken: response.data.nextPageToken,
                   messages: results,
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+
+      case "list_threads": {
+        const {
+          account,
+          query = "in:inbox",
+          maxResults = 10,
+          pageToken,
+          includeSpamTrash = false,
+        } = args as {
+          account: string;
+          query?: string;
+          maxResults?: number;
+          pageToken?: string;
+          includeSpamTrash?: boolean;
+        };
+        if (!query || query.trim() === "") {
+          throw new Error("query is required");
+        }
+        if (!Number.isInteger(maxResults) || maxResults < 1 || maxResults > 500) {
+          throw new Error("maxResults must be an integer between 1 and 500");
+        }
+
+        const client = await gmailClient.getClient(account);
+        const response = await client.users.threads.list({
+          userId: "me",
+          q: query.trim(),
+          maxResults,
+          pageToken,
+          includeSpamTrash,
+        });
+
+        const threads = (response.data.threads || []).map((thread) => ({
+          id: thread.id,
+          threadId: thread.id,
+          snippet: thread.snippet,
+          historyId: thread.historyId,
+        }));
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  tool: name,
+                  query: query.trim(),
+                  count: threads.length,
+                  resultSizeEstimate: response.data.resultSizeEstimate,
+                  nextPageToken: response.data.nextPageToken,
+                  threads,
                 },
                 null,
                 2
