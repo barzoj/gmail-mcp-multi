@@ -6,7 +6,7 @@ import * as fs from "fs";
 import { AddressInfo } from "net";
 import { AccountManager, Account } from "./accounts.js";
 
-type AccessLevel = "readonly" | "modify" | "full";
+export type AccessLevel = "readonly" | "compose" | "modify" | "full";
 
 interface OAuthKeys {
   installed?: {
@@ -28,9 +28,14 @@ interface AuthenticateOptions {
 
 const SCOPES: Record<AccessLevel, string[]> = {
   readonly: ["https://www.googleapis.com/auth/gmail.readonly"],
+  compose: [
+    "https://www.googleapis.com/auth/gmail.readonly",
+    "https://www.googleapis.com/auth/gmail.compose",
+  ],
   modify: ["https://www.googleapis.com/auth/gmail.modify"],
   full: ["https://mail.google.com/"],
 };
+const DEFAULT_ACCESS: AccessLevel = "compose";
 
 export async function authenticateAccount(
   accountManager: AccountManager,
@@ -62,7 +67,7 @@ export async function authenticateAccount(
     access_type: "offline",
     prompt: "consent select_account",
     login_hint: email,
-    scope: SCOPES[options.access || "readonly"],
+    scope: SCOPES[options.access || DEFAULT_ACCESS],
     state,
   });
 

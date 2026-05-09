@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 
 import { AccountManager } from "./accounts.js";
-import { authenticateAccount } from "./oauth.js";
+import { AccessLevel, authenticateAccount } from "./oauth.js";
 
 interface CliOptions {
   alias?: string;
   email?: string;
-  access?: "readonly" | "modify" | "full";
+  access?: AccessLevel;
   noBrowser?: boolean;
 }
 
@@ -28,7 +28,7 @@ async function main(): Promise<void> {
   });
 
   console.log(
-    `Authenticated ${account.alias} <${account.email}> with ${options.access || "readonly"} access`
+    `Authenticated ${account.alias} <${account.email}> with ${options.access || "compose"} access`
   );
 }
 
@@ -51,8 +51,8 @@ function parseArgs(args: string[]): CliOptions {
         i++;
         break;
       case "--access":
-        if (next !== "readonly" && next !== "modify" && next !== "full") {
-          throw new Error("--access must be one of: readonly, modify, full");
+        if (!isAccessLevel(next)) {
+          throw new Error("--access must be one of: readonly, compose, modify, full");
         }
         options.access = next;
         i++;
@@ -73,6 +73,15 @@ function parseArgs(args: string[]): CliOptions {
   return options;
 }
 
+function isAccessLevel(value: string | undefined): value is AccessLevel {
+  return (
+    value === "readonly" ||
+    value === "compose" ||
+    value === "modify" ||
+    value === "full"
+  );
+}
+
 function printUsage(): void {
   console.log(`Usage:
   gmail-mcp-multi-auth --alias personal --email you@gmail.com
@@ -80,7 +89,7 @@ function printUsage(): void {
 Options:
   --alias, -a       Local account alias. Letters, numbers, underscores, hyphens.
   --email, -e       Gmail address to authorize.
-  --access          readonly | modify | full. Defaults to readonly.
+  --access          readonly | compose | modify | full. Defaults to compose.
   --no-browser      Print the URL without opening a browser.
 `);
 }

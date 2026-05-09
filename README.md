@@ -4,9 +4,9 @@ A Gmail MCP server with native multi-account support. It lets an MCP client use 
 
 ## Current Status
 
-This project currently supports Gmail account authentication, mailbox search, full message reads, label listing, and private local attachment downloads.
+This project currently supports Gmail account authentication, mailbox search, full message reads, label listing, draft creation, threaded reply draft creation, and private local attachment downloads.
 
-Some tool schemas are still exposed before their handlers are implemented. See [Not Yet Working](#not-yet-working) before relying on mutating email operations.
+Some mutating capabilities are intentionally not exposed. See [Not Yet Working](#not-yet-working) before relying on unsupported email operations.
 
 ## What Works
 
@@ -16,6 +16,8 @@ Some tool schemas are still exposed before their handlers are implemented. See [
 - Searching messages with Gmail query syntax.
 - Reading full Gmail messages, including payload parts and attachment metadata.
 - Listing labels for an account.
+- Creating standalone plain-text Gmail drafts.
+- Creating threaded plain-text reply drafts with reply-all recipient defaults.
 - Downloading attachments to a private local directory.
 - Attachment downloads by exact filename, current Gmail attachment ID, part ID, `X-Attachment-Id`, or `Content-ID`.
 - Recursive traversal of nested MIME parts.
@@ -23,16 +25,15 @@ Some tool schemas are still exposed before their handlers are implemented. See [
 
 ## Not Yet Working
 
-These tool schemas are currently advertised, but the server handler does not implement them yet. Calling them returns `Unknown tool: <name>`.
+This tool schema is currently advertised, but the server handler does not implement it yet. Calling it returns `Unknown tool: <name>`.
 
 | Tool | Current behavior |
 |------|------------------|
-| `send_email` | Schema exists, handler is missing |
 | `modify_email` | Schema exists, handler is missing |
 
 These capabilities are not currently exposed by the tool list:
 
-- Create draft
+- Send email. This server creates drafts only and does not expose or call Gmail send APIs.
 - Delete or trash email
 - Batch modify email
 - Batch delete email
@@ -120,7 +121,9 @@ Or authenticate with the CLI:
 gmail-mcp-multi-auth --alias personal --email you@example.com
 ```
 
-The `access` option accepts `readonly`, `modify`, or `full`; it defaults to `readonly`. The working read and download tools only require readonly access.
+The `access` option accepts `readonly`, `compose`, `modify`, or `full`; it defaults to `compose`. The default requests the scopes needed by the currently working tools: read/search/download plus draft creation. Existing accounts can be re-authenticated with the same alias and no `access` parameter to get the default scopes.
+
+`compose` requests Google's `https://www.googleapis.com/auth/gmail.readonly` and `https://www.googleapis.com/auth/gmail.compose` scopes. Google treats the compose scope as draft-management and send-capable, but this server enforces draft-only behavior by exposing only draft tools and never implementing Gmail send calls. Use `readonly` explicitly only if you want an account token that cannot create drafts.
 
 ## Working Tools
 
@@ -142,7 +145,7 @@ Adds or re-authenticates an account. Opens a browser when available and also pri
 authenticate({
   alias: "personal",
   email: "you@example.com",
-  access: "readonly"
+  access: "compose"
 })
 ```
 
@@ -221,6 +224,76 @@ Saved files:
 - Never accept an arbitrary output directory.
 - Sanitize filenames to prevent path traversal.
 - Auto-rename on collision.
+
+### `create_draft`
+
+Creates a standalone plain-text Gmail draft and returns minimal draft metadata. It does not send email.
+
+```js
+create_draft({
+  account: "personal",
+  to: ["friend@example.com"],
+  cc: ["team@example.com"],
+  subject: "Coffee next week",
+  body: "Are you free Tuesday morning?"
+})
+```
+
+Returns:
+
+```json
+{
+  "account": "personal",
+  "draftId": "r...",
+  "messageId": "18f...",
+  "threadId": "18f...",
+  "to": ["friend@example.com"],
+  "cc": ["team@example.com"],
+  "bcc": [],
+  "subject": "Coffee next week"
+}
+```
+
+### `create_reply_draft`
+
+Creates a plain-text draft reply attached to the source Gmail thread. By default, recipients are reply-all style: `To` is the source `Reply-To` or `From`, and `Cc` includes the original `To` and `Cc` recipients while excluding the authenticated account and duplicates. Passing `to`, `cc`, or `bcc` overrides that field.
+
+```js
+create_reply_draft({
+  account: "personal",
+  messageId: "18f...",
+  body: "Thanks, I will take a look."
+})
+```
+
+Override recipients or subject when needed:
+
+```js
+create_reply_draft({
+  account: "personal",
+  messageId: "18f...",
+  to: ["sender@example.com"],
+  cc: [],
+  subject: "Re: Updated proposal",
+  body: "Thanks, I will take a look."
+})
+```
+
+Returns:
+
+```json
+{
+  "account": "personal",
+  "draftId": "r...",
+  "messageId": "18f...",
+  "threadId": "18e...",
+  "replyToMessageId": "<source-message-id@example.com>",
+  "to": ["sender@example.com"],
+  "cc": [],
+  "bcc": [],
+  "subject": "Re: Updated proposal"
+}
+```
 
 ### `list_labels`
 

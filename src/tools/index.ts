@@ -1,5 +1,8 @@
 import { Tool, CallToolRequest } from "@modelcontextprotocol/sdk/types.js";
 import { gmail_v1 } from "googleapis";
+import addressparser from "nodemailer/lib/addressparser/index.js";
+import MailComposer from "nodemailer/lib/mail-composer/index.js";
+import Mail from "nodemailer/lib/mailer/index.js";
 import { AccountManager } from "../accounts.js";
 import {
   AttachmentPartInfo,
@@ -39,8 +42,8 @@ export const tools: Tool[] = [
         },
         access: {
           type: "string",
-          enum: ["readonly", "modify", "full"],
-          description: "Gmail access level to request (default: readonly)",
+          enum: ["readonly", "compose", "modify", "full"],
+          description: "Gmail access level to request (default: compose)",
         },
       },
       required: ["alias"],
@@ -113,8 +116,8 @@ export const tools: Tool[] = [
     },
   },
   {
-    name: "send_email",
-    description: "Send a new email",
+    name: "create_draft",
+    description: "Create a new Gmail draft. This tool never sends email.",
     inputSchema: {
       type: "object",
       properties: {
@@ -147,6 +150,51 @@ export const tools: Tool[] = [
         },
       },
       required: ["account", "to", "subject", "body"],
+    },
+  },
+  {
+    name: "create_reply_draft",
+    description:
+      "Create a Gmail draft reply in the source message thread. This tool never sends email.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        account: {
+          type: "string",
+          description: "Account alias or email to use",
+        },
+        messageId: {
+          type: "string",
+          description: "The ID of the email message to reply to",
+        },
+        body: {
+          type: "string",
+          description: "Reply body (plain text)",
+        },
+        to: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Override reply recipients. Defaults to Reply-To or From on the source message.",
+        },
+        cc: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Override CC recipients. Defaults to original To and Cc, excluding the authenticated account and duplicates.",
+        },
+        bcc: {
+          type: "array",
+          items: { type: "string" },
+          description: "BCC recipients",
+        },
+        subject: {
+          type: "string",
+          description:
+            "Override reply subject. Defaults to the source subject with Re: prefix when needed.",
+        },
+      },
+      required: ["account", "messageId", "body"],
     },
   },
   {
@@ -218,7 +266,7 @@ export async function handleToolCall(
         const { alias, email, access } = args as {
           alias: string;
           email?: string;
-          access?: "readonly" | "modify" | "full";
+          access?: "readonly" | "compose" | "modify" | "full";
         };
         const account = await authenticateAccount(accountManager, {
           alias,
@@ -341,6 +389,189 @@ export async function handleToolCall(
                     "application/octet-stream",
                   size: download.data.length,
                   path: saved.path,
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+
+      case "create_draft": {
+        const { account, to, subject, body, cc, bcc } = args as {
+          account: string;
+          to: string[];
+          subject: string;
+          body: string;
+          cc?: string[];
+          bcc?: string[];
+        };
+        const accountConfig = getAccountConfig(accountManager, account);
+        const parsedTo = parseAddressList(to, "to");
+        const parsedCc = parseAddressList(cc, "cc");
+        const parsedBcc = parseAddressList(bcc, "bcc");
+        validateNonEmptyRecipients(parsedTo, parsedCc, parsedBcc);
+        const cleanSubject = validateRequiredHeaderValue(subject, "subject");
+        const cleanBody = validateRequiredBody(body);
+
+        const raw = await buildMimeMessage({
+          from: accountConfig.email,
+          to: parsedTo,
+          cc: parsedCc,
+          bcc: parsedBcc,
+          subject: cleanSubject,
+          body: cleanBody,
+        });
+
+        const client = await gmailClient.getClient(account);
+        const draft = await client.users.drafts.create({
+          userId: "me",
+          requestBody: {
+            message: {
+              raw,
+            },
+          },
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  account: accountConfig.alias,
+                  draftId: draft.data.id,
+                  messageId: draft.data.message?.id,
+                  threadId: draft.data.message?.threadId,
+                  to: formatAddressList(parsedTo),
+                  cc: formatAddressList(parsedCc),
+                  bcc: formatAddressList(parsedBcc),
+                  subject: cleanSubject,
+                },
+                null,
+                2
+              ),
+            },
+          ],
+        };
+      }
+
+      case "create_reply_draft": {
+        const { account, messageId, body, to, cc, bcc, subject } = args as {
+          account: string;
+          messageId: string;
+          body: string;
+          to?: string[];
+          cc?: string[];
+          bcc?: string[];
+          subject?: string;
+        };
+        const accountConfig = getAccountConfig(accountManager, account);
+        const cleanBody = validateRequiredBody(body);
+        const overrideTo =
+          to === undefined ? undefined : parseAddressList(to, "to");
+        const overrideCc =
+          cc === undefined ? undefined : parseAddressList(cc, "cc");
+        const parsedBcc = parseAddressList(bcc, "bcc");
+        const subjectOverride =
+          subject === undefined
+            ? undefined
+            : validateRequiredHeaderValue(subject, "subject");
+
+        const client = await gmailClient.getClient(account);
+        const source = await client.users.messages.get({
+          userId: "me",
+          id: messageId,
+          format: "metadata",
+          metadataHeaders: [
+            "Message-ID",
+            "References",
+            "Reply-To",
+            "From",
+            "To",
+            "Cc",
+            "Subject",
+          ],
+        });
+        if (!source.data.threadId) {
+          throw new Error(
+            `Source message ${messageId} has no threadId; refusing to create an unthreaded reply draft`
+          );
+        }
+
+        const headers = source.data.payload?.headers || [];
+        const sourceMessageId = validateMessageIdHeader(
+          getHeaderValue(headers, "Message-ID"),
+          messageId
+        );
+        const references = buildReferencesHeader(
+          getHeaderValue(headers, "References"),
+          sourceMessageId
+        );
+        const computedSubject = getReplySubject(getHeaderValue(headers, "Subject"));
+        const cleanSubject = subjectOverride ?? computedSubject;
+
+        const computedTo = removeDuplicateAddresses(
+          parseAddressHeader(
+            getHeaderValue(headers, "Reply-To") || getHeaderValue(headers, "From"),
+            "source Reply-To/From"
+          ),
+          accountConfig.email
+        );
+        const computedCc = removeDuplicateAddresses(
+          [
+            ...parseAddressHeader(getHeaderValue(headers, "To"), "source To"),
+            ...parseAddressHeader(getHeaderValue(headers, "Cc"), "source Cc"),
+          ],
+          accountConfig.email,
+          computedTo
+        );
+
+        const parsedTo = overrideTo ?? computedTo;
+        const parsedCc = removeDuplicateAddresses(
+          overrideCc ?? computedCc,
+          undefined,
+          parsedTo
+        );
+        validateNonEmptyRecipients(parsedTo, parsedCc, parsedBcc);
+
+        const raw = await buildMimeMessage({
+          from: accountConfig.email,
+          to: parsedTo,
+          cc: parsedCc,
+          bcc: parsedBcc,
+          subject: cleanSubject,
+          body: cleanBody,
+          inReplyTo: sourceMessageId,
+          references,
+        });
+
+        const draft = await client.users.drafts.create({
+          userId: "me",
+          requestBody: {
+            message: {
+              raw,
+              threadId: source.data.threadId,
+            },
+          },
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: JSON.stringify(
+                {
+                  account: accountConfig.alias,
+                  draftId: draft.data.id,
+                  messageId: draft.data.message?.id,
+                  threadId: draft.data.message?.threadId,
+                  replyToMessageId: sourceMessageId,
+                  to: formatAddressList(parsedTo),
+                  cc: formatAddressList(parsedCc),
+                  bcc: formatAddressList(parsedBcc),
+                  subject: cleanSubject,
                 },
                 null,
                 2
@@ -481,4 +712,205 @@ async function getAttachmentData(
 
 function getErrorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+function getHeaderValue(
+  headers: gmail_v1.Schema$MessagePartHeader[],
+  name: string
+): string | undefined {
+  return (
+    headers.find((header) => header.name?.toLowerCase() === name.toLowerCase())
+      ?.value || undefined
+  );
+}
+
+interface ParsedAddress {
+  name: string;
+  address: string;
+}
+
+interface MimeDraftOptions {
+  from: string;
+  to: ParsedAddress[];
+  cc: ParsedAddress[];
+  bcc: ParsedAddress[];
+  subject: string;
+  body: string;
+  inReplyTo?: string;
+  references?: string;
+}
+
+function getAccountConfig(accountManager: AccountManager, account: string) {
+  const accountConfig = accountManager.getAccount(account);
+  if (!accountConfig) {
+    throw new Error(`Account not found: ${account}`);
+  }
+  return accountConfig;
+}
+
+function parseAddressList(values: string[] | undefined, field: string): ParsedAddress[] {
+  if (values === undefined) {
+    return [];
+  }
+  if (!Array.isArray(values)) {
+    throw new Error(`${field} must be an array of email addresses`);
+  }
+
+  return removeDuplicateAddresses(
+    values.flatMap((value, index) =>
+      parseAddressHeader(value, `${field}[${index}]`)
+    )
+  );
+}
+
+function parseAddressHeader(
+  value: string | undefined,
+  field: string
+): ParsedAddress[] {
+  if (!value) {
+    return [];
+  }
+  validateNoHeaderInjection(value, field);
+
+  const parsed = addressparser(value, { flatten: true }).map((address) => ({
+    name: address.name || "",
+    address: address.address || "",
+  }));
+  if (parsed.length === 0) {
+    throw new Error(`${field} must contain at least one valid email address`);
+  }
+
+  for (const address of parsed) {
+    validateNoHeaderInjection(address.name, `${field} display name`);
+    validateNoHeaderInjection(address.address, `${field} address`);
+    if (!isValidEmailAddress(address.address)) {
+      throw new Error(`Malformed email address in ${field}: ${address.address}`);
+    }
+  }
+
+  return parsed;
+}
+
+function isValidEmailAddress(address: string): boolean {
+  return /^[^\s@<>"]+@[^\s@<>"]+$/.test(address);
+}
+
+function removeDuplicateAddresses(
+  addresses: ParsedAddress[],
+  excludeAddress?: string,
+  existingAddresses: ParsedAddress[] = []
+): ParsedAddress[] {
+  const seen = new Set(
+    existingAddresses.map((address) => address.address.toLowerCase())
+  );
+  if (excludeAddress) {
+    seen.add(excludeAddress.toLowerCase());
+  }
+
+  const unique: ParsedAddress[] = [];
+  for (const address of addresses) {
+    const key = address.address.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(address);
+  }
+  return unique;
+}
+
+function validateNonEmptyRecipients(
+  to: ParsedAddress[],
+  cc: ParsedAddress[],
+  bcc: ParsedAddress[]
+): void {
+  if (to.length + cc.length + bcc.length === 0) {
+    throw new Error("At least one recipient is required");
+  }
+}
+
+function validateRequiredHeaderValue(value: string, field: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error(`${field} is required`);
+  }
+  validateNoHeaderInjection(value, field);
+  return value.trim();
+}
+
+function validateRequiredBody(value: string): string {
+  if (typeof value !== "string" || value.trim() === "") {
+    throw new Error("body is required");
+  }
+  return value;
+}
+
+function validateNoHeaderInjection(value: string, field: string): void {
+  if (/[\r\n]/.test(value)) {
+    throw new Error(`Header injection characters are not allowed in ${field}`);
+  }
+}
+
+function validateMessageIdHeader(
+  value: string | undefined,
+  gmailMessageId: string
+): string {
+  if (!value) {
+    throw new Error(
+      `Source message ${gmailMessageId} is missing Message-ID; refusing to create an orphan reply draft`
+    );
+  }
+  validateNoHeaderInjection(value, "source Message-ID");
+  return value.trim();
+}
+
+function buildReferencesHeader(
+  existingReferences: string | undefined,
+  sourceMessageId: string
+): string {
+  if (existingReferences) {
+    validateNoHeaderInjection(existingReferences, "source References");
+  }
+  const references = existingReferences?.trim();
+  if (!references) {
+    return sourceMessageId;
+  }
+  return `${references} ${sourceMessageId}`;
+}
+
+function getReplySubject(subject: string | undefined): string {
+  const cleanSubject = subject?.trim() || "";
+  validateNoHeaderInjection(cleanSubject, "source Subject");
+  if (/^re:/i.test(cleanSubject)) {
+    return cleanSubject;
+  }
+  return `Re: ${cleanSubject}`;
+}
+
+function formatAddressList(addresses: ParsedAddress[]): string[] {
+  return addresses.map((address) =>
+    address.name ? `${address.name} <${address.address}>` : address.address
+  );
+}
+
+async function buildMimeMessage(options: MimeDraftOptions): Promise<string> {
+  const mailOptions: Mail.Options = {
+    from: options.from,
+    to: options.to,
+    cc: options.cc,
+    bcc: options.bcc,
+    subject: options.subject,
+    text: options.body,
+    textEncoding: "quoted-printable",
+    xMailer: false,
+  };
+
+  if (options.inReplyTo) {
+    mailOptions.inReplyTo = options.inReplyTo;
+  }
+  if (options.references) {
+    mailOptions.references = options.references;
+  }
+
+  const message = await new MailComposer(mailOptions).compile().build();
+  return message.toString("base64url");
 }
